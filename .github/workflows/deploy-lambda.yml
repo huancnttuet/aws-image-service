@@ -1,0 +1,97 @@
+name: Deploy Lambda Functions
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - 'src/**'
+      - '.github/workflows/**'
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  deploy:
+    name: Deploy to AWS Lambda
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          pip install boto3
+
+      # Deploy Upload Handler
+      - name: Package Upload Handler
+        run: |
+          cd lambda
+          zip -r upload_handler.zip upload_handler.py
+
+      - name: Deploy Upload Handler
+        run: |
+          aws lambda update-function-code \
+            --function-name ImageService-Upload-dev \
+            --zip-file fileb://lambda/upload_handler.zip
+
+      - name: Update Upload Handler Environment
+        run: |
+          aws lambda update-function-configuration \
+            --function-name ImageService-Upload-dev \
+            --environment "Variables={BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }},TABLE_NAME=${{ secrets.DYNAMODB_TABLE_NAME }},ENVIRONMENT=dev}"
+
+      # Deploy List Handler
+      - name: Package List Handler
+        run: |
+          cd lambda
+          zip -r list_handler.zip list_handler.py
+
+      - name: Deploy List Handler
+        run: |
+          aws lambda update-function-code \
+            --function-name ImageService-List-dev \
+            --zip-file fileb://lambda/list_handler.zip
+
+      - name: Update List Handler Environment
+        run: |
+          aws lambda update-function-configuration \
+            --function-name ImageService-List-dev \
+            --environment "Variables={BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }},TABLE_NAME=${{ secrets.DYNAMODB_TABLE_NAME }},ENVIRONMENT=dev}"
+
+      # Deploy Get Handler
+      - name: Package Get Handler
+        run: |
+          cd lambda
+          zip -r get_handler.zip get_handler.py
+
+      - name: Deploy Get Handler
+        run: |
+          aws lambda update-function-code \
+            --function-name ImageService-Get-dev \
+            --zip-file fileb://lambda/get_handler.zip
+
+      - name: Update Get Handler Environment
+        run: |
+          aws lambda update-function-configuration \
+            --function-name ImageService-Get-dev \
+            --environment "Variables={BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }},TABLE_NAME=${{ secrets.DYNAMODB_TABLE_NAME }},ENVIRONMENT=dev}"
+
+      - name: Deployment Summary
+        run: |
+          echo "✅ All Lambda functions deployed successfully!"
+          echo "📦 Functions updated:"
+          echo "  - ImageService-Upload-dev"
+          echo "  - ImageService-List-dev"
+          echo "  - ImageService-Get-dev"
