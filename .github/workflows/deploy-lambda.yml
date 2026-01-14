@@ -37,14 +37,14 @@ jobs:
       # Deploy Upload Handler
       - name: Package Upload Handler
         run: |
-          cd lambda
+          cd src
           zip -r upload_handler.zip upload_handler.py
 
       - name: Deploy Upload Handler
         run: |
           aws lambda update-function-code \
             --function-name ImageService-Upload-dev \
-            --zip-file fileb://lambda/upload_handler.zip
+            --zip-file fileb://src/upload_handler.zip
 
       - name: Update Upload Handler Environment
         run: |
@@ -55,14 +55,14 @@ jobs:
       # Deploy List Handler
       - name: Package List Handler
         run: |
-          cd lambda
+          cd src
           zip -r list_handler.zip list_handler.py
 
       - name: Deploy List Handler
         run: |
           aws lambda update-function-code \
             --function-name ImageService-List-dev \
-            --zip-file fileb://lambda/list_handler.zip
+            --zip-file fileb://src/list_handler.zip
 
       - name: Update List Handler Environment
         run: |
@@ -73,14 +73,14 @@ jobs:
       # Deploy Get Handler
       - name: Package Get Handler
         run: |
-          cd lambda
+          cd src
           zip -r get_handler.zip get_handler.py
 
       - name: Deploy Get Handler
         run: |
           aws lambda update-function-code \
             --function-name ImageService-Get-dev \
-            --zip-file fileb://lambda/get_handler.zip
+            --zip-file fileb://src/get_handler.zip
 
       - name: Update Get Handler Environment
         run: |
