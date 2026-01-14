@@ -40,24 +40,24 @@ def lambda_handler(event, context):
         
         print(f"Retrieved {len(items)} images from DynamoDB")
 
-        # Generate presigned URLs for each image
-        for item in items:
-            if 's3Key' in item:
-                try:
-                    presigned_url = s3.generate_presigned_url(
-                        'get_object',
-                        Params={
-                            'Bucket': BUCKET_NAME,
-                            'Key': item['s3Key']
-                        },
-                        ExpiresIn=3600  # 1 hour
-                    )
-                    item['downloadUrl'] = presigned_url
-                except Exception as url_error:
-                    print(f"Error generating presigned URL for {item.get('imageId')}: {str(url_error)}")
-                    item['downloadUrl'] = None
+        # # Generate presigned URLs for each image
+        # for item in items:
+        #     if 's3Key' in item:
+        #         try:
+        #             presigned_url = s3.generate_presigned_url(
+        #                 'get_object',
+        #                 Params={
+        #                     'Bucket': BUCKET_NAME,
+        #                     'Key': item['s3Key']
+        #                 },
+        #                 ExpiresIn=3600  # 1 hour
+        #             )
+        #             item['downloadUrl'] = presigned_url
+        #         except Exception as url_error:
+        #             print(f"Error generating presigned URL for {item.get('imageId')}: {str(url_error)}")
+        #             item['downloadUrl'] = None
         
-        print(f"Retrieved {len(items)} images from DynamoDB with presigned URLs")
+        # print(f"Retrieved {len(items)} images from DynamoDB with presigned URLs")
         
         return {
             'statusCode': 200,
