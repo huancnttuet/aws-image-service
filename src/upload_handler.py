@@ -83,21 +83,32 @@ def lambda_handler(event, context):
         if 'multipart/form-data' not in content_type:
             return response(400, {'error': 'Content-Type must be multipart/form-data'})
         
-        # Get body bytes
+        # Get body bytes - MUST be base64 encoded for binary files
         body = event.get('body', '')
         is_base64 = event.get('isBase64Encoded', False)
         
-        if is_base64:
-            body_bytes = base64.b64decode(body)
-        else:
-            # Already bytes or string that needs encoding
-            body_bytes = body.encode('utf-8') if isinstance(body, str) else body
+        # Debug info
+        print(f"isBase64Encoded: {is_base64}")
+        print(f"Body type: {type(body)}, length: {len(body)}")
+        
+        if not is_base64:
+            # API Gateway không được cấu hình Binary Media Types!
+            return response(400, {
+                'error': 'Binary support not configured',
+                'message': 'Please add "multipart/form-data" to API Gateway Binary Media Types and redeploy',
+                'isBase64Encoded': is_base64
+            })
+        
+        body_bytes = base64.b64decode(body)
+        print(f"Decoded body length: {len(body_bytes)}")
         
         # Parse multipart
         file_data, filename, file_content_type = parse_multipart(body_bytes, content_type)
         
         if not file_data or not filename:
             return response(400, {'error': 'No file found in request'})
+        
+        print(f"File: {filename}, Size: {len(file_data)}, Type: {file_content_type}")
         
         # Generate ID and key
         image_id = str(uuid.uuid4())
