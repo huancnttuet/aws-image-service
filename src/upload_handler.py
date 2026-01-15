@@ -16,19 +16,13 @@ def lambda_handler(event, context):
     POST /upload
     Upload image to S3 and store metadata in DynamoDB
     
-    Expected body:
-    {
-        "filename": "photo.jpg",
-        "content": "base64_encoded_image_data",
-        "contentType": "image/jpeg"
-    }
+    Expected: multipart/form-data with 'file' field
     """
     try:
-        # Parse request body
-        body = json.loads(event.get('body', '{}'))
+        # Parse multipart/form-data
+        content_type = event.get('headers', {}).get('content-type', '') or event.get('headers', {}).get('Content-Type', '')
         
-        # Validate required fields
-        if not all(k in body for k in ['filename', 'content', 'contentType']):
+        if 'multipart/form-data' not in content_type:
             return {
                 'statusCode': 400,
                 'headers': {
@@ -36,7 +30,58 @@ def lambda_handler(event, context):
                     'Access-Control-Allow-Origin': '*'
                 },
                 'body': json.dumps({
-                    'error': 'Missing required fields: filename, content, contentType'
+                    'error': 'Content-Type must be multipart/form-data'
+                })
+            }
+        
+        # Get the body (base64 encoded in API Gateway)
+        body = event.get('body', '')
+        is_base64 = event.get('isBase64Encoded', False)
+        
+        if is_base64:
+            body = base64.b64decode(body)
+        else:
+            body = body.encode('utf-8')
+        
+        # Parse multipart form data
+        import email
+        from email import policy
+        from io import BytesIO
+        
+        # Create email message from body
+        msg = email.message_from_bytes(
+            b'Content-Type: ' + content_type.encode() + b'\r\n\r\n' + body,
+            policy=policy.default
+        )
+        
+        # Extract file from form data
+        file_data = None
+        filename = None
+        content_type_file = None
+        
+        for part in msg.walk():
+            content_disposition = part.get('Content-Disposition', '')
+            if 'filename=' in content_disposition:
+                # Extract filename
+                import re
+                match = re.search(r'filename="?([^"]+)"?', content_disposition)
+                if match:
+                    filename = match.group(1)
+                
+                # Get file data
+                file_data = part.get_payload(decode=True)
+                content_type_file = part.get_content_type() or 'application/octet-stream'
+                break
+        
+        if not file_data or not filename:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({
+                    'error': 'No file uploaded. Please use form field name "file"'
                 })
             }
         
@@ -44,19 +89,15 @@ def lambda_handler(event, context):
         image_id = str(uuid.uuid4())
         
         # Extract file extension
-        filename = body['filename']
         file_extension = filename.split('.')[-1] if '.' in filename else 'jpg'
         s3_key = f"images/{image_id}.{file_extension}"
-        
-        # Decode base64 content
-        image_data = base64.b64decode(body['content'])
         
         # Upload to S3
         s3.put_object(
             Bucket=BUCKET_NAME,
             Key=s3_key,
-            Body=image_data,
-            ContentType=body['contentType'],
+            Body=file_data,
+            ContentType=content_type_file,
             Metadata={
                 'original-filename': filename,
                 'image-id': image_id
@@ -71,12 +112,22 @@ def lambda_handler(event, context):
             Item={
                 'imageId': image_id,
                 'filename': filename,
-                'contentType': body['contentType'],
+                'contentType': content_type_file,
                 's3Key': s3_key,
-                'size': len(image_data),
+                'size': len(file_data),
                 'uploadedAt': timestamp,
                 'bucket': BUCKET_NAME
             }
+        )
+        
+        # Generate presigned URL for download
+        presigned_url = s3.generate_presigned_url(
+            'get_object',
+            Params={
+                'Bucket': BUCKET_NAME,
+                'Key': s3_key
+            },
+            ExpiresIn=3600  # 1 hour
         )
         
         print(f"Successfully uploaded image: {image_id}")
@@ -92,6 +143,7 @@ def lambda_handler(event, context):
                 'imageId': image_id,
                 'filename': filename,
                 's3Key': s3_key,
+                'downloadUrl': presigned_url,
                 'uploadedAt': timestamp
             })
         }
