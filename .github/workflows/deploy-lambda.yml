@@ -5,7 +5,7 @@ on:
     branches:
       - master
     paths:
-      - "lambda/**"
+      - "src/**"
       - ".github/workflows/**"
   workflow_dispatch: # Allow manual trigger
 
@@ -44,13 +44,13 @@ jobs:
         run: |
           aws lambda update-function-code \
             --function-name ImageService-Upload-dev \
-            --zip-file fileb://src/upload_handler.zip \
-            --handler upload_handler.lambda_handler
+            --zip-file fileb://src/upload_handler.zip
 
-      - name: Update Upload Handler Environment
+      - name: Update Upload Handler Configuration
         run: |
           aws lambda update-function-configuration \
             --function-name ImageService-Upload-dev \
+            --handler upload_handler.lambda_handler \
             --environment "Variables={BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }},TABLE_NAME=${{ secrets.DYNAMODB_TABLE_NAME }},ENVIRONMENT=dev}"
 
       # Deploy List Handler
@@ -63,13 +63,13 @@ jobs:
         run: |
           aws lambda update-function-code \
             --function-name ImageService-List-dev \
-            --zip-file fileb://src/list_handler.zip \
-            --handler list_handler.lambda_handler
+            --zip-file fileb://src/list_handler.zip
 
-      - name: Update List Handler Environment
+      - name: Update List Handler Configuration
         run: |
           aws lambda update-function-configuration \
             --function-name ImageService-List-dev \
+            --handler list_handler.lambda_handler \
             --environment "Variables={BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }},TABLE_NAME=${{ secrets.DYNAMODB_TABLE_NAME }},ENVIRONMENT=dev}"
 
       # Deploy Get Handler
@@ -82,13 +82,13 @@ jobs:
         run: |
           aws lambda update-function-code \
             --function-name ImageService-Get-dev \
-            --zip-file fileb://src/get_handler.zip \
-            --handler get_handler.lambda_handler
+            --zip-file fileb://src/get_handler.zip
 
-      - name: Update Get Handler Environment
+      - name: Update Get Handler Configuration
         run: |
           aws lambda update-function-configuration \
             --function-name ImageService-Get-dev \
+            --handler get_handler.lambda_handler \
             --environment "Variables={BUCKET_NAME=${{ secrets.S3_BUCKET_NAME }},TABLE_NAME=${{ secrets.DYNAMODB_TABLE_NAME }},ENVIRONMENT=dev}"
 
       - name: Deployment Summary
