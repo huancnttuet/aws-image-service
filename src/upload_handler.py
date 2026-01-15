@@ -19,6 +19,9 @@ def lambda_handler(event, context):
     Expected: multipart/form-data with 'file' field
     """
     try:
+        # Log event for debugging
+        print(f"Event: {json.dumps(event)}")
+        
         # Parse multipart/form-data
         content_type = event.get('headers', {}).get('content-type', '') or event.get('headers', {}).get('Content-Type', '')
         
@@ -38,39 +41,87 @@ def lambda_handler(event, context):
         body = event.get('body', '')
         is_base64 = event.get('isBase64Encoded', False)
         
+        print(f"Is base64: {is_base64}, Body length: {len(body)}")
+        
         if is_base64:
-            body = base64.b64decode(body)
+            body_bytes = base64.b64decode(body)
         else:
-            body = body.encode('utf-8')
+            body_bytes = body.encode('utf-8') if isinstance(body, str) else body
         
-        # Parse multipart form data
-        import email
-        from email import policy
-        from io import BytesIO
+        print(f"Body bytes length: {len(body_bytes)}")
         
-        # Create email message from body
-        msg = email.message_from_bytes(
-            b'Content-Type: ' + content_type.encode() + b'\r\n\r\n' + body,
-            policy=policy.default
-        )
+        # Parse multipart form data manually
+        import re
         
-        # Extract file from form data
+        # Extract boundary from content-type
+        boundary_match = re.search(r'boundary=([^;]+)', content_type)
+        if not boundary_match:
+            return {
+                'statusCode': 400,
+                'headers': {
+                    'Content-Type': 'application/json',
+                    'Access-Control-Allow-Origin': '*'
+                },
+                'body': json.dumps({
+                    'error': 'No boundary found in Content-Type'
+                })
+            }
+        
+        boundary = boundary_match.group(1).strip('"')
+        boundary_bytes = ('--' + boundary).encode()
+        
+        print(f"Boundary: {boundary}")
+        
+        # Split by boundary
+        parts = body_bytes.split(boundary_bytes)
+        
         file_data = None
         filename = None
         content_type_file = None
         
-        for part in msg.walk():
-            content_disposition = part.get('Content-Disposition', '')
-            if 'filename=' in content_disposition:
+        for part in parts:
+            if not part or part == b'--\r\n' or part == b'--':
+                continue
+            
+            # Split headers and body
+            if b'\r\n\r\n' in part:
+                headers_section, body_section = part.split(b'\r\n\r\n', 1)
+            elif b'\n\n' in part:
+                headers_section, body_section = part.split(b'\n\n', 1)
+            else:
+                continue
+            
+            headers_str = headers_section.decode('utf-8', errors='ignore')
+            
+            # Check if this part contains a file
+            if 'filename=' in headers_str:
                 # Extract filename
-                import re
-                match = re.search(r'filename="?([^"]+)"?', content_disposition)
-                if match:
-                    filename = match.group(1)
+                filename_match = re.search(r'filename="([^"]+)"', headers_str)
+                if filename_match:
+                    filename = filename_match.group(1)
                 
-                # Get file data
-                file_data = part.get_payload(decode=True)
-                content_type_file = part.get_content_type() or 'application/octet-stream'
+                # Extract content type
+                content_type_match = re.search(r'Content-Type:\s*([^\r\n]+)', headers_str, re.IGNORECASE)
+                if content_type_match:
+                    content_type_file = content_type_match.group(1).strip()
+                else:
+                    # Guess content type from filename
+                    ext = filename.split('.')[-1].lower() if '.' in filename else ''
+                    content_type_map = {
+                        'jpg': 'image/jpeg',
+                        'jpeg': 'image/jpeg',
+                        'png': 'image/png',
+                        'gif': 'image/gif',
+                        'webp': 'image/webp',
+                        'bmp': 'image/bmp',
+                        'svg': 'image/svg+xml'
+                    }
+                    content_type_file = content_type_map.get(ext, 'application/octet-stream')
+                
+                # Remove trailing \r\n or \n
+                file_data = body_section.rstrip(b'\r\n')
+                
+                print(f"Found file: {filename}, Content-Type: {content_type_file}, Size: {len(file_data)} bytes")
                 break
         
         if not file_data or not filename:
@@ -103,6 +154,8 @@ def lambda_handler(event, context):
                 'image-id': image_id
             }
         )
+        
+        print(f"Uploaded to S3: {s3_key}, Size: {len(file_data)} bytes")
         
         # Store metadata in DynamoDB
         table = dynamodb.Table(TABLE_NAME)
@@ -144,7 +197,9 @@ def lambda_handler(event, context):
                 'filename': filename,
                 's3Key': s3_key,
                 'downloadUrl': presigned_url,
-                'uploadedAt': timestamp
+                'uploadedAt': timestamp,
+                'size': len(file_data),
+                'contentType': content_type_file
             })
         }
         
