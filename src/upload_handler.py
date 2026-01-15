@@ -19,9 +19,6 @@ def lambda_handler(event, context):
     Expected: multipart/form-data with 'file' field
     """
     try:
-        # Log event for debugging
-        print(f"Event: {json.dumps(event)}")
-        
         # Parse multipart/form-data
         content_type = event.get('headers', {}).get('content-type', '') or event.get('headers', {}).get('Content-Type', '')
         
@@ -46,15 +43,17 @@ def lambda_handler(event, context):
         if is_base64:
             body_bytes = base64.b64decode(body)
         else:
-            body_bytes = body.encode('utf-8') if isinstance(body, str) else body
+            body_bytes = body.encode('latin-1') if isinstance(body, str) else body
         
         print(f"Body bytes length: {len(body_bytes)}")
         
-        # Parse multipart form data manually
+        # Parse multipart form data
         import re
+        import cgi
+        from io import BytesIO
         
         # Extract boundary from content-type
-        boundary_match = re.search(r'boundary=([^;]+)', content_type)
+        boundary_match = re.search(r'boundary=([^;\s]+)', content_type)
         if not boundary_match:
             return {
                 'statusCode': 400,
@@ -68,60 +67,98 @@ def lambda_handler(event, context):
             }
         
         boundary = boundary_match.group(1).strip('"')
-        boundary_bytes = ('--' + boundary).encode()
         
         print(f"Boundary: {boundary}")
         
-        # Split by boundary
-        parts = body_bytes.split(boundary_bytes)
+        # Use cgi.FieldStorage to parse multipart data
+        environ = {
+            'REQUEST_METHOD': 'POST',
+            'CONTENT_TYPE': content_type,
+            'CONTENT_LENGTH': str(len(body_bytes))
+        }
+        
+        fp = BytesIO(body_bytes)
+        form = cgi.FieldStorage(fp=fp, environ=environ, keep_blank_values=True)
         
         file_data = None
         filename = None
         content_type_file = None
         
-        for part in parts:
-            if not part or part == b'--\r\n' or part == b'--':
-                continue
+        # Try to find file field
+        for key in form.keys():
+            field = form[key]
+            if hasattr(field, 'filename') and field.filename:
+                filename = field.filename
+                file_data = field.file.read()
+                content_type_file = field.type if hasattr(field, 'type') and field.type else None
+                print(f"Found file via cgi: {filename}, type: {content_type_file}")
+                break
+        
+        # If cgi failed, try manual parsing
+        if not file_data or not filename:
+            print("cgi parsing failed, trying manual parsing...")
             
-            # Split headers and body
-            if b'\r\n\r\n' in part:
-                headers_section, body_section = part.split(b'\r\n\r\n', 1)
-            elif b'\n\n' in part:
-                headers_section, body_section = part.split(b'\n\n', 1)
-            else:
-                continue
+            boundary_bytes = ('--' + boundary).encode('latin-1')
+            end_boundary = boundary_bytes + b'--'
             
-            headers_str = headers_section.decode('utf-8', errors='ignore')
+            # Split by boundary
+            parts = body_bytes.split(boundary_bytes)
             
-            # Check if this part contains a file
-            if 'filename=' in headers_str:
+            for part in parts:
+                # Skip empty parts and end marker
+                if not part or part.strip() in [b'', b'--', b'--\r\n']:
+                    continue
+                
+                # Remove leading CRLF
+                if part.startswith(b'\r\n'):
+                    part = part[2:]
+                elif part.startswith(b'\n'):
+                    part = part[1:]
+                
+                # Find header/body separator
+                separator = None
+                if b'\r\n\r\n' in part:
+                    separator = b'\r\n\r\n'
+                elif b'\n\n' in part:
+                    separator = b'\n\n'
+                else:
+                    continue
+                
+                header_part, body_part = part.split(separator, 1)
+                headers_str = header_part.decode('utf-8', errors='ignore')
+                
+                # Check for filename in Content-Disposition
+                if 'filename=' not in headers_str:
+                    continue
+                
                 # Extract filename
-                filename_match = re.search(r'filename="([^"]+)"', headers_str)
+                filename_match = re.search(r'filename="([^"]*)"', headers_str)
+                if not filename_match:
+                    filename_match = re.search(r"filename=([^\s;]+)", headers_str)
+                
                 if filename_match:
                     filename = filename_match.group(1)
                 
                 # Extract content type
-                content_type_match = re.search(r'Content-Type:\s*([^\r\n]+)', headers_str, re.IGNORECASE)
-                if content_type_match:
-                    content_type_file = content_type_match.group(1).strip()
-                else:
-                    # Guess content type from filename
-                    ext = filename.split('.')[-1].lower() if '.' in filename else ''
-                    content_type_map = {
-                        'jpg': 'image/jpeg',
-                        'jpeg': 'image/jpeg',
-                        'png': 'image/png',
-                        'gif': 'image/gif',
-                        'webp': 'image/webp',
-                        'bmp': 'image/bmp',
-                        'svg': 'image/svg+xml'
-                    }
-                    content_type_file = content_type_map.get(ext, 'application/octet-stream')
+                ct_match = re.search(r'Content-Type:\s*([^\r\n]+)', headers_str, re.IGNORECASE)
+                if ct_match:
+                    content_type_file = ct_match.group(1).strip()
                 
-                # Remove trailing \r\n or \n
-                file_data = body_section.rstrip(b'\r\n')
+                # Remove trailing boundary marker and CRLF
+                # The body ends before the next boundary or end of data
+                if body_part.endswith(b'--\r\n'):
+                    body_part = body_part[:-4]
+                elif body_part.endswith(b'--'):
+                    body_part = body_part[:-2]
                 
-                print(f"Found file: {filename}, Content-Type: {content_type_file}, Size: {len(file_data)} bytes")
+                # Remove trailing CRLF (part delimiter)
+                if body_part.endswith(b'\r\n'):
+                    body_part = body_part[:-2]
+                elif body_part.endswith(b'\n'):
+                    body_part = body_part[:-1]
+                
+                file_data = body_part
+                print(f"Found file via manual: {filename}, size: {len(file_data)}")
                 break
         
         if not file_data or not filename:
@@ -136,12 +173,29 @@ def lambda_handler(event, context):
                 })
             }
         
+        # Determine content type if not set
+        if not content_type_file:
+            ext = filename.split('.')[-1].lower() if '.' in filename else ''
+            content_type_map = {
+                'jpg': 'image/jpeg',
+                'jpeg': 'image/jpeg',
+                'png': 'image/png',
+                'gif': 'image/gif',
+                'webp': 'image/webp',
+                'bmp': 'image/bmp',
+                'svg': 'image/svg+xml',
+                'pdf': 'application/pdf'
+            }
+            content_type_file = content_type_map.get(ext, 'application/octet-stream')
+        
         # Generate unique ID
         image_id = str(uuid.uuid4())
         
         # Extract file extension
-        file_extension = filename.split('.')[-1] if '.' in filename else 'jpg'
+        file_extension = filename.split('.')[-1].lower() if '.' in filename else 'bin'
         s3_key = f"images/{image_id}.{file_extension}"
+        
+        print(f"Uploading to S3: {s3_key}, Size: {len(file_data)} bytes, ContentType: {content_type_file}")
         
         # Upload to S3
         s3.put_object(
@@ -154,8 +208,6 @@ def lambda_handler(event, context):
                 'image-id': image_id
             }
         )
-        
-        print(f"Uploaded to S3: {s3_key}, Size: {len(file_data)} bytes")
         
         # Store metadata in DynamoDB
         table = dynamodb.Table(TABLE_NAME)
